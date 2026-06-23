@@ -17,6 +17,38 @@ function normaliseUkPhone(input: string) {
   return phone.replace(/[^0-9]/g, '');
 }
 
+function extractMissingColumnName(message: string | undefined) {
+  if (!message) return null;
+  const match = message.match(/Could not find the '([^']+)' column/i);
+  return match?.[1] || null;
+}
+
+async function insertMessageWithFallback(payload: Record<string, unknown>) {
+  const insertPayload = { ...payload };
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const result = await supabase.from('messages').insert(insertPayload).select().single();
+    if (!result.error) {
+      return { data: result.data, error: null, droppedColumns: Object.keys(payload).filter((k) => !(k in insertPayload)) };
+    }
+
+    const missingColumn = extractMissingColumnName(result.error.message);
+    if (!missingColumn || !(missingColumn in insertPayload)) {
+      return { data: result.data, error: result.error, droppedColumns: [] };
+    }
+
+    console.warn('[send-whatsapp] retrying insert without missing schema column', {
+      missingColumn,
+    });
+    delete insertPayload[missingColumn];
+  }
+
+  return {
+    data: null,
+    error: { message: 'failed to insert message after schema-fallback retries' },
+    droppedColumns: [],
+  };
+}
+
 export async function POST(request: Request) {
   if (!authed()) {
     return NextResponse.json({ error: 'unauthorised' }, { status: 401 });
@@ -59,17 +91,35 @@ export async function POST(request: Request) {
           text: { body: message },
         };
 
-  const upstream = await fetch(`https://graph.facebook.com/v18.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(waPayload),
-  });
+  let upstream: Response;
+  try {
+    upstream = await fetch(`https://graph.facebook.com/v18.0/${WHATSAPP_PHONE_NUMBER_ID}/messages`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(waPayload),
+    });
+  } catch (err) {
+    console.error('[send-whatsapp] failed to call WhatsApp API', {
+      lead_id,
+      phone: to,
+      outgoingType,
+      error: err,
+    });
+    return NextResponse.json({ error: 'network error calling WhatsApp API' }, { status: 502 });
+  }
 
   const upstreamData = await upstream.json().catch(() => null);
   if (!upstream.ok) {
+    console.error('[send-whatsapp] WhatsApp API rejected outbound message', {
+      lead_id,
+      phone: to,
+      outgoingType,
+      status: upstream.status,
+      details: upstreamData,
+    });
     return NextResponse.json(
       { error: 'whatsapp send failed', details: upstreamData },
       { status: upstream.status || 502 }
@@ -94,28 +144,17 @@ export async function POST(request: Request) {
     baseInsertPayload.media_id = media_id;
   }
 
-  let { data: loggedMessage, error: logError } = await supabase
-    .from('messages')
-    .insert(baseInsertPayload)
-    .select()
-    .single();
-
-  // Fallback for stale Supabase schema cache where media_id isn't recognized yet.
-  if (logError && /media_id/i.test(logError.message) && /column/i.test(logError.message)) {
-    console.warn('[send-whatsapp] media_id insert failed, retrying without media_id', {
-      error: logError.message,
-    });
-    const { media_id: _ignored, ...withoutMediaId } = baseInsertPayload;
-    const retry = await supabase
-      .from('messages')
-      .insert(withoutMediaId)
-      .select()
-      .single();
-    loggedMessage = retry.data;
-    logError = retry.error;
-  }
+  const insertResult = await insertMessageWithFallback(baseInsertPayload);
+  const loggedMessage = insertResult.data;
+  const logError = insertResult.error;
 
   if (logError) {
+    console.error('[send-whatsapp] failed to log outbound message', {
+      lead_id,
+      phone: to,
+      outgoingType,
+      error: logError.message,
+    });
     return NextResponse.json({ error: logError.message }, { status: 500 });
   }
 
@@ -129,6 +168,7 @@ export async function POST(request: Request) {
     ok: true,
     message: loggedMessage,
     sendStatus,
+    droppedColumns: insertResult.droppedColumns,
     upstream: upstreamData,
   });
 }
