@@ -285,14 +285,22 @@ function mergeMessagesKeepingOptimistic(previous, confirmed) {
     (m) => typeof m.id === 'string' && m.id.startsWith(OPTIMISTIC_PREFIX)
   );
 
+  const confirmedAvailable = [...confirmed];
   const unresolvedOptimistic = optimistic.filter((opt) => {
     const optTs = new Date(opt.created_at || 0).getTime();
-    return !confirmed.some((msg) => {
+    const matchIdx = confirmedAvailable.findIndex((msg) => {
       if (msg.direction !== 'out') return false;
       if ((msg.body || '').trim() !== (opt.body || '').trim()) return false;
       const msgTs = new Date(msg.created_at || 0).getTime();
-      return Math.abs(msgTs - optTs) <= 2 * 60 * 1000;
+      // Only match to a message created at (or just after) the optimistic timestamp.
+      // This prevents older identical messages from incorrectly consuming optimistic entries.
+      return msgTs >= optTs - 10 * 1000 && msgTs <= optTs + 5 * 60 * 1000;
     });
+    if (matchIdx >= 0) {
+      confirmedAvailable.splice(matchIdx, 1);
+      return false;
+    }
+    return true;
   });
 
   const merged = [...confirmed, ...unresolvedOptimistic];
@@ -320,7 +328,7 @@ function upsertIncomingMessage(previous, incoming) {
     if (m.direction !== incoming.direction) return false;
     if ((m.body || '').trim() !== (incoming.body || '').trim()) return false;
     const optTs = new Date(m.created_at || 0).getTime();
-    return Math.abs(optTs - incomingTs) <= 2 * 60 * 1000;
+    return incomingTs >= optTs - 10 * 1000 && incomingTs <= optTs + 5 * 60 * 1000;
   });
 
   const merged = [...previous];
