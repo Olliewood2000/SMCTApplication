@@ -20,6 +20,8 @@ export default function Conversation({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
   const [channel, setChannel] = useState('whatsapp');
+  const [pendingImageFile, setPendingImageFile] = useState(null);
+  const [pendingImagePreviewUrl, setPendingImagePreviewUrl] = useState('');
   const bottomRef = useRef(null);
   const imageInputRef = useRef(null);
 
@@ -106,12 +108,22 @@ export default function Conversation({
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  useEffect(() => {
+    return () => {
+      if (pendingImagePreviewUrl) {
+        URL.revokeObjectURL(pendingImagePreviewUrl);
+      }
+    };
+  }, [pendingImagePreviewUrl]);
+
   // Has the seller ever replied? If not, free-form sending is blocked
   // by WhatsApp (24h window only opens after an inbound message).
   const sellerHasReplied = messages.some((m) => m.direction === 'in');
 
   async function send() {
-    if (!draft.trim() || sending) return;
+    const text = draft.trim();
+    const hasPendingImage = !!pendingImageFile;
+    if ((!text && !hasPendingImage) || sending) return;
     if (channel !== 'whatsapp') {
       setError('Email sending is coming soon. Please use WhatsApp for now.');
       return;
@@ -119,9 +131,22 @@ export default function Conversation({
     setSending(true);
     setError('');
 
-    const text = draft.trim();
     const optimisticId = `${OPTIMISTIC_PREFIX}${Date.now()}`;
-    const optimisticMessage = {
+    const optimisticMessage = hasPendingImage
+      ? {
+          id: optimisticId,
+          lead_id: lead.id,
+          direction: 'out',
+          channel: 'whatsapp',
+          body: text || null,
+          message_type: 'image',
+          media_id: null,
+          media_urls: pendingImagePreviewUrl ? [pendingImagePreviewUrl] : [],
+          is_automated: false,
+          status: 'sent',
+          created_at: new Date().toISOString(),
+        }
+      : {
       id: optimisticId,
       lead_id: lead.id,
       direction: 'out',
@@ -135,21 +160,70 @@ export default function Conversation({
     setMessages((prev) => [...prev, optimisticMessage]);
     setDraft('');
 
-    const res = await fetch('/api/send-whatsapp', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        lead_id: lead.id,
-        phone: lead.phone,
-        message: text,
-        message_type: 'text',
-      }),
-    });
+    let res;
+    if (hasPendingImage) {
+      const uploadForm = new FormData();
+      uploadForm.append('file', pendingImageFile);
+      const uploadRes = await fetch('/api/upload-media', {
+        method: 'POST',
+        body: uploadForm,
+      });
+
+      if (!uploadRes.ok) {
+        setError('Could not upload image. Try again.');
+        setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
+        setDraft(text);
+        setSending(false);
+        return;
+      }
+
+      const uploadData = await uploadRes.json();
+      const mediaId = uploadData?.media_id;
+      if (!mediaId) {
+        setError('Could not upload image. Try again.');
+        setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
+        setDraft(text);
+        setSending(false);
+        return;
+      }
+
+      res = await fetch('/api/send-whatsapp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lead_id: lead.id,
+          phone: lead.phone,
+          media_id: mediaId,
+          message: text || null,
+          message_type: 'image',
+        }),
+      });
+
+      if (res.ok) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === optimisticId ? { ...m, media_id: mediaId, body: text || null } : m))
+        );
+      }
+    } else {
+      res = await fetch('/api/send-whatsapp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lead_id: lead.id,
+          phone: lead.phone,
+          message: text,
+          message_type: 'text',
+        }),
+      });
+    }
 
     if (res.ok) {
       // Keep optimistic message as the final outbound bubble.
       // If the backend separately logs this message, polling will reconcile naturally.
       setMessages((prev) => prev.map((m) => (m.id === optimisticId ? { ...m, status: 'sent' } : m)));
+      if (pendingImagePreviewUrl) URL.revokeObjectURL(pendingImagePreviewUrl);
+      setPendingImageFile(null);
+      setPendingImagePreviewUrl('');
     } else {
       setError('Could not send. Try again.');
       setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
@@ -166,80 +240,20 @@ export default function Conversation({
       setError('Email image sending is coming soon. Please use WhatsApp for now.');
       return;
     }
-    if (sending) return;
-
-    setSending(true);
-    setError('');
-
-    const optimisticId = `${OPTIMISTIC_PREFIX}${Date.now()}`;
-    const previewUrl = URL.createObjectURL(file);
-    const optimisticMessage = {
-      id: optimisticId,
-      lead_id: lead.id,
-      direction: 'out',
-      channel: 'whatsapp',
-      body: null,
-      message_type: 'image',
-      media_id: null,
-      media_urls: [previewUrl],
-      is_automated: false,
-      status: 'sent',
-      created_at: new Date().toISOString(),
-    };
-
-    setMessages((prev) => [...prev, optimisticMessage]);
-
-    try {
-      const uploadForm = new FormData();
-      uploadForm.append('file', file);
-      const uploadRes = await fetch('/api/upload-media', {
-        method: 'POST',
-        body: uploadForm,
-      });
-
-      if (!uploadRes.ok) {
-        setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
-        setError('Could not upload image. Try again.');
-        URL.revokeObjectURL(previewUrl);
-        return;
-      }
-
-      const uploadData = await uploadRes.json();
-      const mediaId = uploadData?.media_id;
-      if (!mediaId) {
-        setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
-        setError('Image uploaded but media_id was missing.');
-        URL.revokeObjectURL(previewUrl);
-        return;
-      }
-
-      const sendRes = await fetch('/api/send-whatsapp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          lead_id: lead.id,
-          phone: lead.phone,
-          media_id: mediaId,
-          message_type: 'image',
-        }),
-      });
-
-      if (!sendRes.ok) {
-        setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
-        setError('Could not send image. Try again.');
-        URL.revokeObjectURL(previewUrl);
-        return;
-      }
-
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === optimisticId ? { ...m, media_id: mediaId, media_urls: [], status: 'sent' } : m
-        )
-      );
-      URL.revokeObjectURL(previewUrl);
-    } finally {
-      setSending(false);
+    if (pendingImagePreviewUrl) {
+      URL.revokeObjectURL(pendingImagePreviewUrl);
     }
+    setPendingImageFile(file);
+    setPendingImagePreviewUrl(URL.createObjectURL(file));
+    setError('');
+  }
+
+  function removePendingImage() {
+    if (pendingImagePreviewUrl) {
+      URL.revokeObjectURL(pendingImagePreviewUrl);
+    }
+    setPendingImageFile(null);
+    setPendingImagePreviewUrl('');
   }
 
   const panelUi = (
@@ -346,6 +360,20 @@ export default function Conversation({
 
         <div style={composer}>
           {error && <div style={errorBar}>{error}</div>}
+          {pendingImagePreviewUrl && (
+            <div style={pendingImageWrap}>
+              <img src={pendingImagePreviewUrl} alt="Pending upload preview" style={pendingImageThumb} />
+              <button
+                type="button"
+                onClick={removePendingImage}
+                className="smct-ghost-btn"
+                style={removeImageBtn}
+                disabled={sending}
+              >
+                Remove
+              </button>
+            </div>
+          )}
           {!sellerHasReplied && !loading && messages.length > 0 && (
             <div style={noticeBar}>
               Heads up: until {leadFullName || 'the seller'} replies, WhatsApp only allows approved template messages — a free typed reply may not deliver.
@@ -383,7 +411,12 @@ export default function Conversation({
               rows={1}
               style={input}
             />
-            <button onClick={send} disabled={sending || !draft.trim()} className="smct-primary-btn" style={sendBtn}>
+            <button
+              onClick={send}
+              disabled={sending || (!draft.trim() && !pendingImageFile)}
+              className="smct-primary-btn"
+              style={sendBtn}
+            >
               {sending ? '…' : 'Send'}
             </button>
           </div>
@@ -615,6 +648,27 @@ const attachBtn = {
   padding: '0 12px',
   fontSize: 22,
   lineHeight: 1,
+};
+const pendingImageWrap = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 10,
+  marginBottom: 10,
+  padding: 8,
+  border: '1px solid var(--smct-border)',
+  borderRadius: 10,
+  background: 'var(--smct-surface-muted)',
+};
+const pendingImageThumb = {
+  width: 54,
+  height: 54,
+  objectFit: 'cover',
+  borderRadius: 8,
+  display: 'block',
+};
+const removeImageBtn = {
+  padding: '6px 10px',
+  fontSize: 12,
 };
 const errorBar = {
   background: 'var(--smct-danger-soft)', color: 'var(--smct-danger)', fontSize: 12,

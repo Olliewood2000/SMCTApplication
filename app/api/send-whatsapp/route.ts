@@ -47,7 +47,10 @@ export async function POST(request: Request) {
           messaging_product: 'whatsapp',
           to,
           type: 'image',
-          image: { id: media_id },
+          image: {
+            id: media_id,
+            ...(message ? { caption: message } : {}),
+          },
         }
       : {
           messaging_product: 'whatsapp',
@@ -75,7 +78,7 @@ export async function POST(request: Request) {
 
   const sendStatus = 'sent';
   const waMessageId = upstreamData?.messages?.[0]?.id || null;
-  const messageBody = outgoingType === 'image' ? null : message;
+  const messageBody = outgoingType === 'image' ? (message || null) : message;
 
   const { data: loggedMessage, error: logError } = await supabase
     .from('messages')
