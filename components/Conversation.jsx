@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 
+const OPTIMISTIC_PREFIX = 'optimistic-';
+
 // Renders the two-way conversation for a single lead.
 export default function Conversation({
   lead,
@@ -48,7 +50,7 @@ export default function Conversation({
     const res = await fetch(`/api/messages?lead_id=${lead.id}`);
     if (res.ok) {
       const data = await res.json();
-      setMessages(data.messages || []);
+      setMessages((prev) => mergeMessagesKeepingOptimistic(prev, data.messages || []));
     }
     setLoading(false);
   }, [lead.id]);
@@ -79,7 +81,7 @@ export default function Conversation({
     setError('');
 
     const text = draft.trim();
-    const optimisticId = `optimistic-${Date.now()}`;
+    const optimisticId = `${OPTIMISTIC_PREFIX}${Date.now()}`;
     const optimisticMessage = {
       id: optimisticId,
       lead_id: lead.id,
@@ -187,9 +189,14 @@ export default function Conversation({
                   </div>
                 )}
                 <div style={meta}>
-                  {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                  {m.direction === 'out' && m.is_automated && ' · auto'}
-                  {m.direction === 'out' && m.status === 'failed' && ' · failed'}
+                  <span>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                  {m.direction === 'out' && m.is_automated && <span> · auto</span>}
+                  {m.direction === 'out' && m.status === 'failed' && <span> · failed</span>}
+                  {m.direction === 'out' && m.status !== 'failed' && (
+                    <span style={{ marginLeft: 6, color: getTickStyle(m.status).color }}>
+                      {getTickStyle(m.status).label}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -233,6 +240,40 @@ export default function Conversation({
       {panelUi}
     </div>
   );
+}
+
+function mergeMessagesKeepingOptimistic(previous, confirmed) {
+  const optimistic = (previous || []).filter(
+    (m) => typeof m.id === 'string' && m.id.startsWith(OPTIMISTIC_PREFIX)
+  );
+
+  const unresolvedOptimistic = optimistic.filter((opt) => {
+    const optTs = new Date(opt.created_at || 0).getTime();
+    return !confirmed.some((msg) => {
+      if (msg.direction !== 'out') return false;
+      if ((msg.body || '').trim() !== (opt.body || '').trim()) return false;
+      const msgTs = new Date(msg.created_at || 0).getTime();
+      return Math.abs(msgTs - optTs) <= 2 * 60 * 1000;
+    });
+  });
+
+  const merged = [...confirmed, ...unresolvedOptimistic];
+  merged.sort((a, b) => {
+    const aTs = new Date(a.created_at || 0).getTime();
+    const bTs = new Date(b.created_at || 0).getTime();
+    return aTs - bTs;
+  });
+  return merged;
+}
+
+function getTickStyle(status) {
+  if (status === 'read') {
+    return { label: '✓✓', color: 'var(--smct-status-new)' };
+  }
+  if (status === 'delivered') {
+    return { label: '✓✓', color: 'var(--smct-muted)' };
+  }
+  return { label: '✓', color: 'var(--smct-muted)' };
 }
 
 const overlay = {
