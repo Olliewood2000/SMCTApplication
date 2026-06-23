@@ -181,6 +181,7 @@ export default function Conversation({
           setError(errJson?.error || 'Could not upload image. Try again.');
           setMessages((prev) => prev.map((m) => (m.id === optimisticId ? { ...m, status: 'failed' } : m)));
           finalSendOk = false;
+          if (idx < pendingImages.length - 1) await wait(250);
           continue;
         }
 
@@ -190,6 +191,7 @@ export default function Conversation({
           setError('Could not upload image. Try again.');
           setMessages((prev) => prev.map((m) => (m.id === optimisticId ? { ...m, status: 'failed' } : m)));
           finalSendOk = false;
+          if (idx < pendingImages.length - 1) await wait(250);
           continue;
         }
 
@@ -210,6 +212,7 @@ export default function Conversation({
           setError(errJson?.error || 'Could not send image. Try again.');
           setMessages((prev) => prev.map((m) => (m.id === optimisticId ? { ...m, status: 'failed' } : m)));
           finalSendOk = false;
+          if (idx < pendingImages.length - 1) await wait(250);
           continue;
         }
 
@@ -220,6 +223,7 @@ export default function Conversation({
               : m
           )
         );
+        if (idx < pendingImages.length - 1) await wait(250);
       }
     } else {
       const res = await fetch('/api/send-whatsapp', {
@@ -558,6 +562,10 @@ function getTickStyle(status) {
     return { label: '✓✓', color: 'var(--smct-muted)' };
   }
   return { label: '✓', color: 'var(--smct-muted)' };
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 const overlay = {

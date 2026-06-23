@@ -80,21 +80,40 @@ export async function POST(request: Request) {
   const waMessageId = upstreamData?.messages?.[0]?.id || null;
   const messageBody = outgoingType === 'image' ? (message || null) : message;
 
-  const { data: loggedMessage, error: logError } = await supabase
+  const baseInsertPayload: Record<string, unknown> = {
+    lead_id,
+    direction: 'out',
+    channel: 'whatsapp',
+    body: messageBody,
+    message_type: outgoingType,
+    wa_message_id: waMessageId,
+    status: sendStatus,
+    is_automated: false,
+  };
+  if (outgoingType === 'image') {
+    baseInsertPayload.media_id = media_id;
+  }
+
+  let { data: loggedMessage, error: logError } = await supabase
     .from('messages')
-    .insert({
-      lead_id,
-      direction: 'out',
-      channel: 'whatsapp',
-      body: messageBody,
-      message_type: outgoingType,
-      media_id: outgoingType === 'image' ? media_id : null,
-      wa_message_id: waMessageId,
-      status: sendStatus,
-      is_automated: false,
-    })
+    .insert(baseInsertPayload)
     .select()
     .single();
+
+  // Fallback for stale Supabase schema cache where media_id isn't recognized yet.
+  if (logError && /media_id/i.test(logError.message) && /column/i.test(logError.message)) {
+    console.warn('[send-whatsapp] media_id insert failed, retrying without media_id', {
+      error: logError.message,
+    });
+    const { media_id: _ignored, ...withoutMediaId } = baseInsertPayload;
+    const retry = await supabase
+      .from('messages')
+      .insert(withoutMediaId)
+      .select()
+      .single();
+    loggedMessage = retry.data;
+    logError = retry.error;
+  }
 
   if (logError) {
     return NextResponse.json({ error: logError.message }, { status: 500 });
