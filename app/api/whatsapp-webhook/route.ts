@@ -78,6 +78,36 @@ function buildPreview(body: string | null, messageType: string) {
   return 'New WhatsApp message';
 }
 
+function extractMissingColumnName(message: string | undefined) {
+  if (!message) return null;
+  const match = message.match(/Could not find the '([^']+)' column/i);
+  if (!match?.[1]) return null;
+  return match[1];
+}
+
+async function insertInboundMessageWithFallback(payload: Record<string, unknown>) {
+  const insertPayload = { ...payload };
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const { error } = await supabase.from('messages').insert(insertPayload);
+    if (!error) {
+      return { ok: true, droppedColumns: Object.keys(payload).filter((k) => !(k in insertPayload)) };
+    }
+
+    const missingColumn = extractMissingColumnName(error.message);
+    if (!missingColumn || !(missingColumn in insertPayload)) {
+      return { ok: false, error };
+    }
+
+    delete insertPayload[missingColumn];
+    console.warn('[whatsapp-webhook] retrying inbound insert without missing column', {
+      missingColumn,
+    });
+  }
+
+  return { ok: false, error: { message: 'failed to insert inbound message after fallback retries' } };
+}
+
 async function findLeadByPhone(localPhone: string, intlPhone: string) {
   const targetLocal = normaliseToUkLocal(localPhone);
   const targetIntl = normaliseToUkIntl(intlPhone || localPhone);
@@ -185,26 +215,11 @@ export async function POST(request: Request) {
         insertPayload.media_id = inbound.media_id;
       }
 
-      const { error: insertError } = await supabase.from('messages').insert(insertPayload);
-      if (insertError && /media_id/i.test(insertError.message) && /column/i.test(insertError.message)) {
-        const { media_id: _ignore, ...withoutMedia } = insertPayload;
-        const retry = await supabase.from('messages').insert(withoutMedia);
-        if (retry.error) {
-          console.error('[whatsapp-webhook] failed to insert inbound message (fallback failed)', {
-            leadId: lead.id,
-            error: retry.error.message,
-            waMessageId: inbound.wa_message_id,
-          });
-        } else {
-          console.info('[whatsapp-webhook] inbound message inserted (without media_id fallback)', {
-            leadId: lead.id,
-            waMessageId: inbound.wa_message_id,
-          });
-        }
-      } else if (insertError) {
+      const insertResult = await insertInboundMessageWithFallback(insertPayload);
+      if (!insertResult.ok) {
         console.error('[whatsapp-webhook] failed to insert inbound message', {
           leadId: lead.id,
-          error: insertError.message,
+          error: insertResult.error?.message || 'unknown insert error',
           waMessageId: inbound.wa_message_id,
         });
       } else {
@@ -212,6 +227,7 @@ export async function POST(request: Request) {
           leadId: lead.id,
           waMessageId: inbound.wa_message_id,
           type: inbound.message_type,
+          droppedColumns: insertResult.droppedColumns,
         });
       }
     }
