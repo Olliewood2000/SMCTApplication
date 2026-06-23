@@ -21,6 +21,7 @@ export default function Conversation({
   const [error, setError] = useState('');
   const [channel, setChannel] = useState('whatsapp');
   const bottomRef = useRef(null);
+  const imageInputRef = useRef(null);
 
   const whatsappEnabled = lead?.whatsapp_valid !== false;
   const emailEnabled = lead?.email_valid !== false;
@@ -137,7 +138,12 @@ export default function Conversation({
     const res = await fetch('/api/send-whatsapp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lead_id: lead.id, phone: lead.phone, message: text }),
+      body: JSON.stringify({
+        lead_id: lead.id,
+        phone: lead.phone,
+        message: text,
+        message_type: 'text',
+      }),
     });
 
     if (res.ok) {
@@ -150,6 +156,90 @@ export default function Conversation({
       setDraft(text); // restore so they don't lose it
     }
     setSending(false);
+  }
+
+  async function handleImageSelected(e) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (channel !== 'whatsapp') {
+      setError('Email image sending is coming soon. Please use WhatsApp for now.');
+      return;
+    }
+    if (sending) return;
+
+    setSending(true);
+    setError('');
+
+    const optimisticId = `${OPTIMISTIC_PREFIX}${Date.now()}`;
+    const previewUrl = URL.createObjectURL(file);
+    const optimisticMessage = {
+      id: optimisticId,
+      lead_id: lead.id,
+      direction: 'out',
+      channel: 'whatsapp',
+      body: null,
+      message_type: 'image',
+      media_id: null,
+      media_urls: [previewUrl],
+      is_automated: false,
+      status: 'sent',
+      created_at: new Date().toISOString(),
+    };
+
+    setMessages((prev) => [...prev, optimisticMessage]);
+
+    try {
+      const uploadForm = new FormData();
+      uploadForm.append('file', file);
+      const uploadRes = await fetch('/api/upload-media', {
+        method: 'POST',
+        body: uploadForm,
+      });
+
+      if (!uploadRes.ok) {
+        setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
+        setError('Could not upload image. Try again.');
+        URL.revokeObjectURL(previewUrl);
+        return;
+      }
+
+      const uploadData = await uploadRes.json();
+      const mediaId = uploadData?.media_id;
+      if (!mediaId) {
+        setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
+        setError('Image uploaded but media_id was missing.');
+        URL.revokeObjectURL(previewUrl);
+        return;
+      }
+
+      const sendRes = await fetch('/api/send-whatsapp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lead_id: lead.id,
+          phone: lead.phone,
+          media_id: mediaId,
+          message_type: 'image',
+        }),
+      });
+
+      if (!sendRes.ok) {
+        setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
+        setError('Could not send image. Try again.');
+        URL.revokeObjectURL(previewUrl);
+        return;
+      }
+
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === optimisticId ? { ...m, media_id: mediaId, media_urls: [], status: 'sent' } : m
+        )
+      );
+      URL.revokeObjectURL(previewUrl);
+    } finally {
+      setSending(false);
+    }
   }
 
   const panelUi = (
@@ -220,8 +310,8 @@ export default function Conversation({
               >
                 <div style={m.direction === 'out' ? bubbleOut : bubbleIn}>
                   {imageMessage ? (
-                    <a href={getImageSrc(m.media_id)} target="_blank" rel="noreferrer">
-                      <img src={getImageSrc(m.media_id)} alt="message media" style={messageImage} />
+                    <a href={getImageSrc(m)} target="_blank" rel="noreferrer">
+                      <img src={getImageSrc(m)} alt="message media" style={messageImage} />
                     </a>
                   ) : (
                     <>
@@ -262,6 +352,24 @@ export default function Conversation({
             </div>
           )}
           <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleImageSelected}
+              style={{ display: 'none' }}
+            />
+            <button
+              type="button"
+              className="smct-ghost-btn"
+              style={attachBtn}
+              onClick={() => imageInputRef.current?.click()}
+              disabled={sending}
+              aria-label="Attach image"
+              title="Attach image"
+            >
+              +
+            </button>
             <textarea
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
@@ -302,7 +410,9 @@ function mergeMessagesKeepingOptimistic(previous, confirmed) {
     const optTs = new Date(opt.created_at || 0).getTime();
     const matchIdx = confirmedAvailable.findIndex((msg) => {
       if (msg.direction !== 'out') return false;
+      if ((msg.message_type || 'text') !== (opt.message_type || 'text')) return false;
       if ((msg.body || '').trim() !== (opt.body || '').trim()) return false;
+      if (msg.media_id && opt.media_id && msg.media_id !== opt.media_id) return false;
       const msgTs = new Date(msg.created_at || 0).getTime();
       // Only match to a message created at (or just after) the optimistic timestamp.
       // This prevents older identical messages from incorrectly consuming optimistic entries.
@@ -328,8 +438,14 @@ function isImageMessage(message) {
   return message?.message_type === 'image' || !!message?.media_id;
 }
 
-function getImageSrc(mediaId) {
-  return `/api/get-media?media_id=${encodeURIComponent(mediaId || '')}`;
+function getImageSrc(message) {
+  if (message?.media_id) {
+    return `/api/get-media?media_id=${encodeURIComponent(message.media_id)}`;
+  }
+  if (message?.media_urls?.length) {
+    return message.media_urls[0];
+  }
+  return '';
 }
 
 function upsertIncomingMessage(previous, incoming) {
@@ -346,7 +462,9 @@ function upsertIncomingMessage(previous, incoming) {
   const optimisticIdx = previous.findIndex((m) => {
     if (!(typeof m.id === 'string' && m.id.startsWith(OPTIMISTIC_PREFIX))) return false;
     if (m.direction !== incoming.direction) return false;
+    if ((m.message_type || 'text') !== (incoming.message_type || 'text')) return false;
     if ((m.body || '').trim() !== (incoming.body || '').trim()) return false;
+    if (m.media_id && incoming.media_id && m.media_id !== incoming.media_id) return false;
     const optTs = new Date(m.created_at || 0).getTime();
     return incomingTs >= optTs - 10 * 1000 && incomingTs <= optTs + 5 * 60 * 1000;
   });
@@ -491,6 +609,12 @@ const input = {
 const sendBtn = {
   minWidth: 88,
   padding: '0 18px',
+};
+const attachBtn = {
+  minWidth: 44,
+  padding: '0 12px',
+  fontSize: 22,
+  lineHeight: 1,
 };
 const errorBar = {
   background: 'var(--smct-danger-soft)', color: 'var(--smct-danger)', fontSize: 12,
