@@ -4,6 +4,8 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { getBrowserSupabase } from '../lib/supabase-client';
 
 const OPTIMISTIC_PREFIX = 'optimistic-';
+const MAX_IMAGE_UPLOAD_BYTES = 2 * 1024 * 1024;
+const MAX_IMAGE_PICK_BYTES = 15 * 1024 * 1024;
 
 // Renders the two-way conversation for a single lead.
 export default function Conversation({
@@ -271,13 +273,29 @@ export default function Conversation({
       return;
     }
 
-    const next = valid.map((file, idx) => ({
+    const oversized = valid.filter((f) => f.size > MAX_IMAGE_PICK_BYTES);
+    const candidates = valid.filter((f) => f.size <= MAX_IMAGE_PICK_BYTES);
+    if (oversized.length > 0) {
+      const names = oversized.map((f) => f.name).join(', ');
+      setError(`Skipped ${oversized.length} file(s) over 15MB: ${names}`);
+    }
+    if (!candidates.length) return;
+
+    const compressedFiles = [];
+    for (const file of candidates) {
+      const compressed = await compressImageForUpload(file);
+      compressedFiles.push(compressed);
+    }
+
+    const next = compressedFiles.map((file, idx) => ({
       id: `${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 8)}`,
       file,
       previewUrl: URL.createObjectURL(file),
     }));
     setPendingImages((prev) => [...prev, ...next]);
-    setError('');
+    if (oversized.length === 0) {
+      setError('');
+    }
   }
 
   function removePendingImage(imageId) {
@@ -566,6 +584,70 @@ function getTickStyle(status) {
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function compressImageForUpload(file) {
+  if (!(file instanceof File) || !file.type?.startsWith('image/') || file.size <= MAX_IMAGE_UPLOAD_BYTES) {
+    return file;
+  }
+
+  try {
+    const bitmap = await createImageBitmap(file);
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      bitmap.close();
+      return file;
+    }
+
+    const dimensionSteps = [1920, 1600, 1280, 1024, 800, 640];
+    const qualitySteps = [0.82, 0.72, 0.64, 0.56, 0.48, 0.4];
+
+    let bestBlob = null;
+    for (const maxDim of dimensionSteps) {
+      const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+      const width = Math.max(1, Math.round(bitmap.width * scale));
+      const height = Math.max(1, Math.round(bitmap.height * scale));
+      canvas.width = width;
+      canvas.height = height;
+      ctx.clearRect(0, 0, width, height);
+      ctx.drawImage(bitmap, 0, 0, width, height);
+
+      for (const quality of qualitySteps) {
+        const blob = await canvasToJpegBlob(canvas, quality);
+        if (!blob) continue;
+        if (!bestBlob || blob.size < bestBlob.size) {
+          bestBlob = blob;
+        }
+        if (blob.size <= MAX_IMAGE_UPLOAD_BYTES) {
+          bitmap.close();
+          return blobToFile(blob, file.name);
+        }
+      }
+    }
+
+    bitmap.close();
+    return bestBlob ? blobToFile(bestBlob, file.name) : file;
+  } catch (err) {
+    console.error('[conversation] image compression failed', {
+      fileName: file.name,
+      size: file.size,
+      type: file.type,
+      error: err,
+    });
+    return file;
+  }
+}
+
+function canvasToJpegBlob(canvas, quality) {
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => resolve(blob), 'image/jpeg', quality);
+  });
+}
+
+function blobToFile(blob, originalName) {
+  const base = (originalName || 'image').replace(/\.[a-zA-Z0-9]+$/, '');
+  return new File([blob], `${base}.jpg`, { type: 'image/jpeg' });
 }
 
 const overlay = {
