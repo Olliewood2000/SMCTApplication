@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 
-const WHATSAPP_PHONE_NUMBER_ID = '1265560829965454';
+const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || '1265560829965454';
 
 function authed() {
   const c = cookies().get('smct_auth');
@@ -13,10 +13,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'unauthorised' }, { status: 401 });
   }
 
-  const token = process.env.WHATSAPP_ACCESS_TOKEN;
+  const token = process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN;
   if (!token) {
-    console.error('[upload-media] missing WHATSAPP_ACCESS_TOKEN');
-    return NextResponse.json({ error: 'missing WHATSAPP_ACCESS_TOKEN' }, { status: 500 });
+    console.error('[upload-media] missing WHATSAPP_ACCESS_TOKEN/WHATSAPP_TOKEN');
+    return NextResponse.json({ error: 'missing WHATSAPP_ACCESS_TOKEN or WHATSAPP_TOKEN' }, { status: 500 });
   }
 
   let formData: FormData;

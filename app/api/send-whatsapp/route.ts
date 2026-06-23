@@ -23,13 +23,13 @@ export async function POST(request: Request) {
   }
 
   const { lead_id, phone, message, media_id, message_type } = await request.json();
-  const token = process.env.WHATSAPP_ACCESS_TOKEN;
+  const token = process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN;
 
   if (!lead_id || !phone) {
     return NextResponse.json({ error: 'missing lead_id or phone' }, { status: 400 });
   }
   if (!token) {
-    return NextResponse.json({ error: 'missing WHATSAPP_ACCESS_TOKEN' }, { status: 500 });
+    return NextResponse.json({ error: 'missing WHATSAPP_ACCESS_TOKEN or WHATSAPP_TOKEN' }, { status: 500 });
   }
 
   const outgoingType = message_type === 'image' ? 'image' : 'text';
