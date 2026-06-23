@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Conversation from './Conversation';
+import { getBrowserSupabase } from '../lib/supabase-client';
 
 export default function MessagesSection({ focusLeadId, refreshSignal = 0 }) {
   const [leads, setLeads] = useState([]);
@@ -31,6 +32,38 @@ export default function MessagesSection({ focusLeadId, refreshSignal = 0 }) {
       loadLeads();
     }
   }, [refreshSignal, loadLeads]);
+
+  useEffect(() => {
+    const supabase = getBrowserSupabase();
+    if (!supabase) return undefined;
+
+    const channel = supabase
+      .channel('leads:list')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'leads' },
+        (payload) => {
+          setLeads((prev) =>
+            prev.map((lead) => (lead.id === payload.new.id ? { ...lead, ...payload.new } : lead))
+          );
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'leads' },
+        (payload) => {
+          setLeads((prev) => {
+            if (prev.some((lead) => lead.id === payload.new.id)) return prev;
+            return [payload.new, ...prev];
+          });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   useEffect(() => {
     const media = window.matchMedia('(max-width: 900px)');

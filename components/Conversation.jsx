@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { getBrowserSupabase } from '../lib/supabase-client';
 
 const OPTIMISTIC_PREFIX = 'optimistic-';
 
@@ -61,6 +62,43 @@ export default function Conversation({
     const t = setInterval(load, 5000);
     return () => clearInterval(t);
   }, [load]);
+
+  useEffect(() => {
+    const supabase = getBrowserSupabase();
+    if (!supabase || !lead?.id) return undefined;
+
+    const channel = supabase
+      .channel(`messages:lead:${lead.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+          filter: `lead_id=eq.${lead.id}`,
+        },
+        (payload) => {
+          setMessages((prev) => upsertIncomingMessage(prev, payload.new));
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'messages',
+          filter: `lead_id=eq.${lead.id}`,
+        },
+        (payload) => {
+          setMessages((prev) => upsertIncomingMessage(prev, payload.new));
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [lead?.id]);
 
   // Auto-scroll to newest message
   useEffect(() => {
@@ -258,6 +296,40 @@ function mergeMessagesKeepingOptimistic(previous, confirmed) {
   });
 
   const merged = [...confirmed, ...unresolvedOptimistic];
+  merged.sort((a, b) => {
+    const aTs = new Date(a.created_at || 0).getTime();
+    const bTs = new Date(b.created_at || 0).getTime();
+    return aTs - bTs;
+  });
+  return merged;
+}
+
+function upsertIncomingMessage(previous, incoming) {
+  if (!incoming) return previous;
+
+  const existingIdx = previous.findIndex((m) => m.id === incoming.id);
+  if (existingIdx >= 0) {
+    const copy = [...previous];
+    copy[existingIdx] = { ...copy[existingIdx], ...incoming };
+    return copy;
+  }
+
+  const incomingTs = new Date(incoming.created_at || 0).getTime();
+  const optimisticIdx = previous.findIndex((m) => {
+    if (!(typeof m.id === 'string' && m.id.startsWith(OPTIMISTIC_PREFIX))) return false;
+    if (m.direction !== incoming.direction) return false;
+    if ((m.body || '').trim() !== (incoming.body || '').trim()) return false;
+    const optTs = new Date(m.created_at || 0).getTime();
+    return Math.abs(optTs - incomingTs) <= 2 * 60 * 1000;
+  });
+
+  const merged = [...previous];
+  if (optimisticIdx >= 0) {
+    merged[optimisticIdx] = incoming;
+  } else {
+    merged.push(incoming);
+  }
+
   merged.sort((a, b) => {
     const aTs = new Date(a.created_at || 0).getTime();
     const bTs = new Date(b.created_at || 0).getTime();
