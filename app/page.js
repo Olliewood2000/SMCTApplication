@@ -114,8 +114,6 @@ export default function Page() {
     setActiveTab('messages');
   }
 
-  const activeNav = NAV_ITEMS.find((item) => item.key === activeTab) || NAV_ITEMS[0];
-
   return (
     <div className="smct-app-shell">
       <aside className="smct-sidebar">
@@ -178,17 +176,6 @@ export default function Page() {
             </div>
           </div>
         </div>
-        <header className={`smct-header ${activeTab === 'messages' ? 'smct-header-mobile-hidden-in-messages' : ''}`}>
-          <div className={`smct-header-inner ${activeTab === 'messages' ? 'smct-header-inner-messages' : ''}`}>
-            <div className="smct-section-label">Dashboard</div>
-            <h1 className="smct-page-title" style={{ color: 'var(--smct-text)' }}>
-              {activeNav.title}
-            </h1>
-            <p style={{ margin: 0, color: 'var(--smct-muted)', fontSize: 14 }}>
-              {activeNav.subtitle}
-            </p>
-          </div>
-        </header>
         <div className={`smct-content ${activeTab === 'messages' ? 'smct-content-messages' : ''}`}>
           {activeTab === 'leads' ? (
             <LeadsSection

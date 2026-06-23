@@ -206,7 +206,7 @@ export default function MessagesSection({ focusLeadId, refreshSignal = 0 }) {
 
   return (
     <div style={desktopWrap}>
-      <div style={{ ...desktopPane, width: 360 }}>{listPane}</div>
+      <div style={{ ...desktopPane, width: 'clamp(260px, 34vw, 360px)' }}>{listPane}</div>
       <div style={{ ...desktopPane, ...chatDesktopPane, flex: 1 }}>{chatPane}</div>
     </div>
   );
@@ -232,6 +232,7 @@ const desktopWrap = {
   width: '100%',
   height: '100%',
   minHeight: 0,
+  minWidth: 0,
   margin: 0,
   display: 'flex',
   border: 'none',
@@ -242,6 +243,7 @@ const desktopWrap = {
 };
 const desktopPane = {
   minHeight: 0,
+  minWidth: 0,
 };
 const chatDesktopPane = {
   borderLeft: '1px solid var(--smct-pane-separator)',
@@ -341,7 +343,8 @@ const avatarCircle = {
 };
 const mobileWrap = {
   position: 'relative',
-  height: 'calc(100dvh - 160px)',
+  height: '100%',
+  minHeight: 0,
   overflow: 'hidden',
   borderTop: 'none',
   borderRadius: 0,

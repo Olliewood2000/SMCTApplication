@@ -249,11 +249,11 @@ export default function Conversation({
             {showBackButton && (
               <button onClick={onBack} style={navBtn} aria-label="Back to conversations">←</button>
             )}
-            <div>
-              <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--smct-text)' }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--smct-text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {leadFullName || 'Unknown'}
               </div>
-              <div style={{ color: 'var(--smct-muted)', fontSize: 13 }}>
+              <div style={{ color: 'var(--smct-muted)', fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {lead.year} {lead.make} {lead.model} · {lead.phone}
               </div>
             </div>

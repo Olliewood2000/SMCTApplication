@@ -275,6 +275,7 @@ a {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
+  min-width: 0;
 }
 
 .smct-mobile-brand {
@@ -316,6 +317,19 @@ a {
   max-width: none;
   margin: 0;
   padding: 0;
+  min-width: 0;
+}
+
+.smct-main-messages {
+  height: 100dvh;
+  min-height: 100dvh;
+  overflow: hidden;
+}
+
+.smct-main-messages .smct-content-messages {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 @media (max-width: 980px) {
