@@ -206,39 +206,51 @@ export default function Conversation({
               No messages yet. The opener will appear here once it sends.
             </div>
           )}
-          {messages.map((m) => (
-            <div
-              key={m.id}
-              style={{
-                display: 'flex',
-                justifyContent: m.direction === 'out' ? 'flex-end' : 'flex-start',
-                marginBottom: 8,
-              }}
-            >
-              <div style={m.direction === 'out' ? bubbleOut : bubbleIn}>
-                {m.body && <div>{m.body}</div>}
-                {m.media_urls && m.media_urls.length > 0 && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: m.body ? 8 : 0 }}>
-                    {m.media_urls.map((url, i) => (
-                      <a key={i} href={url} target="_blank" rel="noreferrer">
-                        <img src={url} alt="attachment" style={mediaThumb} />
-                      </a>
-                    ))}
-                  </div>
-                )}
-                <div style={meta}>
-                  <span>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                  {m.direction === 'out' && m.is_automated && <span> · auto</span>}
-                  {m.direction === 'out' && m.status === 'failed' && <span> · failed</span>}
-                  {m.direction === 'out' && m.status !== 'failed' && (
-                    <span style={{ marginLeft: 6, color: getTickStyle(m.status).color }}>
-                      {getTickStyle(m.status).label}
-                    </span>
+          {messages.map((m) => {
+            // We can only fetch media through the proxy when a media_id exists.
+            const imageMessage = isImageMessage(m) && !!m.media_id;
+            return (
+              <div
+                key={m.id}
+                style={{
+                  display: 'flex',
+                  justifyContent: m.direction === 'out' ? 'flex-end' : 'flex-start',
+                  marginBottom: 8,
+                }}
+              >
+                <div style={m.direction === 'out' ? bubbleOut : bubbleIn}>
+                  {imageMessage ? (
+                    <a href={getImageSrc(m.media_id)} target="_blank" rel="noreferrer">
+                      <img src={getImageSrc(m.media_id)} alt="message media" style={messageImage} />
+                    </a>
+                  ) : (
+                    <>
+                      {m.body && <div>{m.body}</div>}
+                      {m.media_urls && m.media_urls.length > 0 && (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: m.body ? 8 : 0 }}>
+                          {m.media_urls.map((url, i) => (
+                            <a key={i} href={url} target="_blank" rel="noreferrer">
+                              <img src={url} alt="attachment" style={mediaThumb} />
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                    </>
                   )}
+                  <div style={meta}>
+                    <span>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    {m.direction === 'out' && m.is_automated && <span> · auto</span>}
+                    {m.direction === 'out' && m.status === 'failed' && <span> · failed</span>}
+                    {m.direction === 'out' && m.status !== 'failed' && (
+                      <span style={{ marginLeft: 6, color: getTickStyle(m.status).color }}>
+                        {getTickStyle(m.status).label}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           <div ref={bottomRef} />
         </div>
 
@@ -310,6 +322,14 @@ function mergeMessagesKeepingOptimistic(previous, confirmed) {
     return aTs - bTs;
   });
   return merged;
+}
+
+function isImageMessage(message) {
+  return message?.message_type === 'image' || !!message?.media_id;
+}
+
+function getImageSrc(mediaId) {
+  return `/api/get-media?media_id=${encodeURIComponent(mediaId || '')}`;
 }
 
 function upsertIncomingMessage(previous, incoming) {
@@ -451,6 +471,14 @@ const bubbleIn = {
 const meta = { fontSize: 10, opacity: 0.72, marginTop: 4, textAlign: 'right' };
 const mediaThumb = {
   width: 90, height: 90, objectFit: 'cover', borderRadius: 8, cursor: 'pointer',
+};
+const messageImage = {
+  width: 'min(240px, 100%)',
+  maxHeight: 280,
+  objectFit: 'cover',
+  borderRadius: 10,
+  display: 'block',
+  cursor: 'pointer',
 };
 const composer = {
   padding: 12, borderTop: '1px solid var(--smct-border)', flexShrink: 0, background: 'var(--smct-surface)',
