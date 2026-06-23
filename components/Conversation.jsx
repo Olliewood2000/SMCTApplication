@@ -94,23 +94,16 @@ export default function Conversation({
     setMessages((prev) => [...prev, optimisticMessage]);
     setDraft('');
 
-    const res = await fetch('/api/messages/send', {
+    const res = await fetch('/api/send-whatsapp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ lead_id: lead.id, text }),
+      body: JSON.stringify({ lead_id: lead.id, phone: lead.phone, message: text }),
     });
 
     if (res.ok) {
-      const { sendStatus, message } = await res.json();
-      if (sendStatus === 'failed') {
-        setError("Message didn't send. The 24-hour window may have closed — you'll need an approved template to reopen it.");
-        setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
-        setDraft(text);
-      } else if (message) {
-        setMessages((prev) => prev.map((m) => (m.id === optimisticId ? message : m)));
-      } else {
-        await load();
-      }
+      // Keep optimistic message as the final outbound bubble.
+      // If the backend separately logs this message, polling will reconcile naturally.
+      setMessages((prev) => prev.map((m) => (m.id === optimisticId ? { ...m, status: 'sent' } : m)));
     } else {
       setError('Could not send. Try again.');
       setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
