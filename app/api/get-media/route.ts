@@ -13,13 +13,13 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const mediaId = searchParams.get('media_id');
-  const token = process.env.WHATSAPP_ACCESS_TOKEN;
+  const token = process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN;
 
   if (!mediaId) {
     return NextResponse.json({ error: 'missing media_id' }, { status: 400 });
   }
   if (!token) {
-    return NextResponse.json({ error: 'missing WHATSAPP_ACCESS_TOKEN' }, { status: 500 });
+    return NextResponse.json({ error: 'missing WHATSAPP_ACCESS_TOKEN or WHATSAPP_TOKEN' }, { status: 500 });
   }
 
   // Step 1: Resolve temporary download URL from WhatsApp Graph API.

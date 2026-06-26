@@ -381,8 +381,9 @@ export default function Conversation({
             </div>
           )}
           {messages.map((m) => {
-            // We can only fetch media through the proxy when a media_id exists.
-            const imageMessage = isImageMessage(m) && !!m.media_id;
+            const mediaType = getMediaType(m);
+            const hasProxyMedia = !!m.media_id;
+            const mediaSrc = hasProxyMedia ? getMediaSrc(m) : '';
             return (
               <div
                 key={m.id}
@@ -393,23 +394,52 @@ export default function Conversation({
                 }}
               >
                 <div style={m.direction === 'out' ? bubbleOut : bubbleIn}>
-                  {imageMessage ? (
-                    <a href={getImageSrc(m)} target="_blank" rel="noreferrer">
-                      <img src={getImageSrc(m)} alt="message media" style={messageImage} />
+                  {hasProxyMedia && mediaType === 'image' && (
+                    <a href={mediaSrc} target="_blank" rel="noreferrer">
+                      <img src={mediaSrc} alt="message media" style={messageImage} />
                     </a>
-                  ) : (
-                    <>
-                      {m.body && <div>{m.body}</div>}
-                      {m.media_urls && m.media_urls.length > 0 && (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: m.body ? 8 : 0 }}>
-                          {m.media_urls.map((url, i) => (
-                            <a key={i} href={url} target="_blank" rel="noreferrer">
-                              <img src={url} alt="attachment" style={mediaThumb} />
-                            </a>
-                          ))}
-                        </div>
-                      )}
-                    </>
+                  )}
+
+                  {hasProxyMedia && mediaType === 'video' && (
+                    <video
+                      src={mediaSrc}
+                      controls
+                      playsInline
+                      preload="metadata"
+                      style={messageVideo}
+                    />
+                  )}
+
+                  {hasProxyMedia && mediaType === 'audio' && (
+                    <audio src={mediaSrc} controls preload="metadata" style={messageAudio} />
+                  )}
+
+                  {hasProxyMedia && mediaType === 'document' && (
+                    <a href={mediaSrc} target="_blank" rel="noreferrer" style={mediaFileLink}>
+                      Open document
+                    </a>
+                  )}
+
+                  {hasProxyMedia && !['image', 'video', 'audio', 'document'].includes(mediaType) && (
+                    <a href={mediaSrc} target="_blank" rel="noreferrer" style={mediaFileLink}>
+                      Open attachment
+                    </a>
+                  )}
+
+                  {m.body && <div style={{ marginTop: hasProxyMedia ? 8 : 0 }}>{m.body}</div>}
+                  {!hasProxyMedia && looksLikePlaceholderMediaBody(m.body) && (
+                    <div style={missingMediaHint}>
+                      Media placeholder only (no media file ID was saved for this message).
+                    </div>
+                  )}
+                  {m.media_urls && m.media_urls.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: m.body ? 8 : 0 }}>
+                      {m.media_urls.map((url, i) => (
+                        <a key={i} href={url} target="_blank" rel="noreferrer">
+                          <img src={url} alt="attachment" style={mediaThumb} />
+                        </a>
+                      ))}
+                    </div>
                   )}
                   <div style={meta}>
                     <span>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
@@ -542,11 +572,19 @@ function mergeMessagesKeepingOptimistic(previous, confirmed) {
   return merged;
 }
 
-function isImageMessage(message) {
-  return message?.message_type === 'image' || !!message?.media_id;
+function getMediaType(message) {
+  const type = String(message?.message_type || '').toLowerCase();
+  if (['image', 'video', 'audio', 'document'].includes(type)) return type;
+
+  const body = String(message?.body || '').toLowerCase();
+  if (body.includes('[video]')) return 'video';
+  if (body.includes('[audio]') || body.includes('[voice]')) return 'audio';
+  if (body.includes('[document]') || body.includes('[file]')) return 'document';
+  if (body.includes('[image]') || body.includes('[photo]')) return 'image';
+  return type || 'attachment';
 }
 
-function getImageSrc(message) {
+function getMediaSrc(message) {
   if (message?.media_id) {
     return `/api/get-media?media_id=${encodeURIComponent(message.media_id)}`;
   }
@@ -554,6 +592,11 @@ function getImageSrc(message) {
     return message.media_urls[0];
   }
   return '';
+}
+
+function looksLikePlaceholderMediaBody(body) {
+  const text = String(body || '').trim().toLowerCase();
+  return ['[video]', '[image]', '[audio]', '[document]', '[file]'].includes(text);
 }
 
 function upsertIncomingMessage(previous, incoming) {
@@ -773,6 +816,28 @@ const messageImage = {
   borderRadius: 10,
   display: 'block',
   cursor: 'pointer',
+};
+const messageVideo = {
+  width: 'min(320px, 100%)',
+  maxHeight: 320,
+  borderRadius: 10,
+  display: 'block',
+  background: '#000',
+};
+const messageAudio = {
+  width: 'min(280px, 100%)',
+  marginTop: 2,
+};
+const mediaFileLink = {
+  display: 'inline-block',
+  color: 'inherit',
+  textDecoration: 'underline',
+  textUnderlineOffset: 2,
+};
+const missingMediaHint = {
+  marginTop: 6,
+  fontSize: 11,
+  opacity: 0.72,
 };
 const composer = {
   padding: 12, borderTop: '1px solid var(--smct-border)', flexShrink: 0, background: 'var(--smct-surface)',
