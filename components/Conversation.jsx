@@ -711,7 +711,7 @@ function mergeMessagesKeepingOptimistic(previous, confirmed) {
     const matchIdx = confirmedAvailable.findIndex((msg) => {
       if (msg.direction !== 'out') return false;
       if ((msg.message_type || 'text') !== (opt.message_type || 'text')) return false;
-      if ((msg.body || '').trim() !== (opt.body || '').trim()) return false;
+      if (getComparableBody(msg.body) !== getComparableBody(opt.body)) return false;
       if (msg.media_id && opt.media_id && msg.media_id !== opt.media_id) return false;
       const msgTs = new Date(msg.created_at || 0).getTime();
       // Only match to a message created at (or just after) the optimistic timestamp.
@@ -771,6 +771,10 @@ function getDisplayBody(body) {
   return String(body || '')
     .replace(/\s*\[\[media_id:[^\]]+\]\]\s*/gi, ' ')
     .trim();
+}
+
+function getComparableBody(body) {
+  return getDisplayBody(body).replace(/\s+/g, ' ').trim();
 }
 
 function looksLikePlaceholderMediaBody(body) {
@@ -845,7 +849,7 @@ function upsertIncomingMessage(previous, incoming) {
     if (!(typeof m.id === 'string' && m.id.startsWith(OPTIMISTIC_PREFIX))) return false;
     if (m.direction !== incoming.direction) return false;
     if ((m.message_type || 'text') !== (incoming.message_type || 'text')) return false;
-    if ((m.body || '').trim() !== (incoming.body || '').trim()) return false;
+    if (getComparableBody(m.body) !== getComparableBody(incoming.body)) return false;
     if (m.media_id && incoming.media_id && m.media_id !== incoming.media_id) return false;
     const optTs = new Date(m.created_at || 0).getTime();
     return incomingTs >= optTs - 10 * 1000 && incomingTs <= optTs + 5 * 60 * 1000;
