@@ -382,8 +382,10 @@ export default function Conversation({
           )}
           {messages.map((m) => {
             const mediaType = getMediaType(m);
-            const hasProxyMedia = !!m.media_id;
-            const mediaSrc = hasProxyMedia ? getMediaSrc(m) : '';
+            const resolvedMediaId = getResolvedMediaId(m);
+            const hasProxyMedia = !!resolvedMediaId;
+            const mediaSrc = hasProxyMedia ? getMediaSrc(m, resolvedMediaId) : '';
+            const displayBody = getDisplayBody(m.body);
             return (
               <div
                 key={m.id}
@@ -426,14 +428,14 @@ export default function Conversation({
                     </a>
                   )}
 
-                  {m.body && <div style={{ marginTop: hasProxyMedia ? 8 : 0 }}>{m.body}</div>}
-                  {!hasProxyMedia && looksLikePlaceholderMediaBody(m.body) && (
+                  {displayBody && <div style={{ marginTop: hasProxyMedia ? 8 : 0 }}>{displayBody}</div>}
+                  {!hasProxyMedia && looksLikePlaceholderMediaBody(displayBody) && (
                     <div style={missingMediaHint}>
                       Media placeholder only (no media file ID was saved for this message).
                     </div>
                   )}
                   {m.media_urls && m.media_urls.length > 0 && (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: m.body ? 8 : 0 }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: displayBody ? 8 : 0 }}>
                       {m.media_urls.map((url, i) => (
                         <a key={i} href={url} target="_blank" rel="noreferrer">
                           <img src={url} alt="attachment" style={mediaThumb} />
@@ -576,7 +578,7 @@ function getMediaType(message) {
   const type = String(message?.message_type || '').toLowerCase();
   if (['image', 'video', 'audio', 'document'].includes(type)) return type;
 
-  const body = String(message?.body || '').toLowerCase();
+  const body = String(getDisplayBody(message?.body) || '').toLowerCase();
   if (body.includes('[video]')) return 'video';
   if (body.includes('[audio]') || body.includes('[voice]')) return 'audio';
   if (body.includes('[document]') || body.includes('[file]')) return 'document';
@@ -584,14 +586,31 @@ function getMediaType(message) {
   return type || 'attachment';
 }
 
-function getMediaSrc(message) {
-  if (message?.media_id) {
-    return `/api/get-media?media_id=${encodeURIComponent(message.media_id)}`;
+function getResolvedMediaId(message) {
+  return message?.media_id || extractEmbeddedMediaId(message?.body);
+}
+
+function getMediaSrc(message, resolvedMediaId) {
+  if (resolvedMediaId) {
+    return `/api/get-media?media_id=${encodeURIComponent(resolvedMediaId)}`;
   }
   if (message?.media_urls?.length) {
     return message.media_urls[0];
   }
   return '';
+}
+
+function extractEmbeddedMediaId(body) {
+  const text = String(body || '');
+  const match = text.match(/\[\[media_id:([^\]]+)\]\]/i);
+  if (!match?.[1]) return null;
+  return match[1].trim();
+}
+
+function getDisplayBody(body) {
+  return String(body || '')
+    .replace(/\s*\[\[media_id:[^\]]+\]\]\s*/gi, ' ')
+    .trim();
 }
 
 function looksLikePlaceholderMediaBody(body) {

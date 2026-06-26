@@ -23,6 +23,15 @@ function extractMissingColumnName(message: string | undefined) {
   return match?.[1] || null;
 }
 
+function withEmbeddedMediaId(body: string | null, mediaId: string | null) {
+  if (!mediaId) return body;
+  const marker = `[[media_id:${mediaId}]]`;
+  const base = String(body || '').trim();
+  if (base.includes(marker)) return base;
+  if (!base) return marker;
+  return `${base} ${marker}`;
+}
+
 async function insertMessageWithFallback(payload: Record<string, unknown>) {
   const insertPayload = { ...payload };
   for (let attempt = 0; attempt < 6; attempt += 1) {
@@ -134,7 +143,7 @@ export async function POST(request: Request) {
     lead_id,
     direction: 'out',
     channel: 'whatsapp',
-    body: messageBody,
+    body: withEmbeddedMediaId(messageBody, outgoingType === 'image' ? (media_id || null) : null),
     message_type: outgoingType,
     wa_message_id: waMessageId,
     status: sendStatus,
