@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { getBrowserSupabase } from '../lib/supabase-client';
 
 const OPTIMISTIC_PREFIX = 'optimistic-';
 const MAX_IMAGE_UPLOAD_BYTES = 2 * 1024 * 1024;
 const MAX_IMAGE_PICK_BYTES = 15 * 1024 * 1024;
+const IMAGE_GROUP_WINDOW_MS = 3 * 60 * 1000;
 
 // Renders the two-way conversation for a single lead.
 export default function Conversation({
@@ -23,6 +24,8 @@ export default function Conversation({
   const [error, setError] = useState('');
   const [channel, setChannel] = useState('whatsapp');
   const [pendingImages, setPendingImages] = useState([]);
+  const [lightboxIndex, setLightboxIndex] = useState(null);
+  const [isMobileViewport, setIsMobileViewport] = useState(false);
   const bottomRef = useRef(null);
   const threadRef = useRef(null);
   const imageInputRef = useRef(null);
@@ -32,6 +35,16 @@ export default function Conversation({
   const whatsappEnabled = lead?.whatsapp_valid !== false;
   const emailEnabled = lead?.email_valid !== false;
   const leadFullName = `${lead.first_name || lead['first name'] || ''} ${lead.last_name || lead['last name'] || ''}`.trim();
+  const galleryItems = useMemo(() => buildGalleryItems(messages), [messages]);
+  const galleryIndexByMessageId = useMemo(() => {
+    const out = {};
+    galleryItems.forEach((item, index) => {
+      out[item.messageId] = index;
+    });
+    return out;
+  }, [galleryItems]);
+  const threadItems = useMemo(() => buildThreadItems(messages), [messages]);
+  const activeLightboxItem = lightboxIndex !== null ? galleryItems[lightboxIndex] : null;
 
   useEffect(() => {
     const preferred = lead?.preferred_channel;
@@ -123,6 +136,35 @@ export default function Conversation({
       pendingImages.forEach((img) => URL.revokeObjectURL(img.previewUrl));
     };
   }, [pendingImages]);
+
+  useEffect(() => {
+    if (lightboxIndex === null) return undefined;
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setLightboxIndex(null);
+      } else if (event.key === 'ArrowRight') {
+        setLightboxIndex((prev) => {
+          if (prev === null || !galleryItems.length) return prev;
+          return (prev + 1) % galleryItems.length;
+        });
+      } else if (event.key === 'ArrowLeft') {
+        setLightboxIndex((prev) => {
+          if (prev === null || !galleryItems.length) return prev;
+          return (prev - 1 + galleryItems.length) % galleryItems.length;
+        });
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [lightboxIndex, galleryItems.length]);
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 900px)');
+    const sync = () => setIsMobileViewport(media.matches);
+    sync();
+    media.addEventListener('change', sync);
+    return () => media.removeEventListener('change', sync);
+  }, []);
 
   // Has the seller ever replied? If not, free-form sending is blocked
   // by WhatsApp (24h window only opens after an inbound message).
@@ -321,6 +363,27 @@ export default function Conversation({
     shouldStickToBottomRef.current = remaining <= 48;
   }
 
+  function openLightboxForMessage(message) {
+    const idx = galleryIndexByMessageId[String(message.id)];
+    if (typeof idx === 'number') {
+      setLightboxIndex(idx);
+    }
+  }
+
+  function showPrevImage() {
+    setLightboxIndex((prev) => {
+      if (prev === null || !galleryItems.length) return prev;
+      return (prev - 1 + galleryItems.length) % galleryItems.length;
+    });
+  }
+
+  function showNextImage() {
+    setLightboxIndex((prev) => {
+      if (prev === null || !galleryItems.length) return prev;
+      return (prev + 1) % galleryItems.length;
+    });
+  }
+
   const panelUi = (
     <div style={embedded ? panelEmbedded : panel} onClick={(e) => e.stopPropagation()}>
         <div style={header}>
@@ -380,7 +443,55 @@ export default function Conversation({
               No messages yet. The opener will appear here once it sends.
             </div>
           )}
-          {messages.map((m) => {
+          {threadItems.map((item) => {
+            if (item.type === 'imageGroup') {
+              const groupDirection = item.direction;
+              const groupMessages = item.messages;
+              const single = groupMessages.length === 1;
+              return (
+                <div
+                  key={`group-${groupDirection}-${groupMessages[0]?.id || Math.random()}`}
+                  style={{
+                    display: 'flex',
+                    justifyContent: groupDirection === 'out' ? 'flex-end' : 'flex-start',
+                    marginBottom: 8,
+                  }}
+                >
+                  <div style={groupDirection === 'out' ? imageGroupBubbleOut : imageGroupBubbleIn}>
+                    <div style={single ? imageGridSingle : imageGrid}>
+                      {groupMessages.map((message) => {
+                        const resolvedMediaId = getResolvedMediaId(message);
+                        const mediaSrc = getMediaSrc(message, resolvedMediaId);
+                        return (
+                          <button
+                            key={message.id}
+                            type="button"
+                            onClick={() => openLightboxForMessage(message)}
+                            style={imageTileButton}
+                          >
+                            <img
+                              src={mediaSrc}
+                              alt="message media"
+                              style={single ? groupImageLarge : groupImageThumb}
+                            />
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div style={meta}>
+                      <span>
+                        {new Date(groupMessages[groupMessages.length - 1].created_at).toLocaleTimeString([], {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
+            const m = item.message;
             const mediaType = getMediaType(m);
             const resolvedMediaId = getResolvedMediaId(m);
             const hasProxyMedia = !!resolvedMediaId;
@@ -397,9 +508,9 @@ export default function Conversation({
               >
                 <div style={m.direction === 'out' ? bubbleOut : bubbleIn}>
                   {hasProxyMedia && mediaType === 'image' && (
-                    <a href={mediaSrc} target="_blank" rel="noreferrer">
+                    <button type="button" onClick={() => openLightboxForMessage(m)} style={imageTileButton}>
                       <img src={mediaSrc} alt="message media" style={messageImage} />
-                    </a>
+                    </button>
                   )}
 
                   {hasProxyMedia && mediaType === 'video' && (
@@ -531,12 +642,61 @@ export default function Conversation({
       </div>
   );
 
-  if (embedded) return panelUi;
+  const lightboxUi = activeLightboxItem ? (
+    <div style={lightboxOverlay} onClick={() => setLightboxIndex(null)}>
+      <div style={lightboxPanel} onClick={(e) => e.stopPropagation()}>
+        <button type="button" onClick={() => setLightboxIndex(null)} style={lightboxCloseBtn} aria-label="Close media viewer">
+          ✕
+        </button>
+        {!isMobileViewport && galleryItems.length > 1 && (
+          <>
+            <button type="button" onClick={showPrevImage} style={{ ...lightboxNavBtn, left: 16 }} aria-label="Previous image">
+              ←
+            </button>
+            <button type="button" onClick={showNextImage} style={{ ...lightboxNavBtn, right: 16 }} aria-label="Next image">
+              →
+            </button>
+          </>
+        )}
+        <div style={lightboxImageWrap}>
+          <img src={activeLightboxItem.src} alt="Expanded media" style={lightboxImage} />
+        </div>
+        <div style={lightboxThumbStrip} className="smct-mobile-scroll-hide">
+          {galleryItems.map((item, index) => (
+            <button
+              key={`${item.messageId}-${index}`}
+              type="button"
+              style={{
+                ...lightboxThumbBtn,
+                ...(index === lightboxIndex ? lightboxThumbBtnActive : null),
+              }}
+              onClick={() => setLightboxIndex(index)}
+              aria-label={`Open image ${index + 1}`}
+            >
+              <img src={item.src} alt="" style={lightboxThumbImg} />
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  ) : null;
+
+  if (embedded) {
+    return (
+      <>
+        {panelUi}
+        {lightboxUi}
+      </>
+    );
+  }
 
   return (
-    <div style={overlay} onClick={onClose}>
-      {panelUi}
-    </div>
+    <>
+      <div style={overlay} onClick={onClose}>
+        {panelUi}
+      </div>
+      {lightboxUi}
+    </>
   );
 }
 
@@ -616,6 +776,58 @@ function getDisplayBody(body) {
 function looksLikePlaceholderMediaBody(body) {
   const text = String(body || '').trim().toLowerCase();
   return ['[video]', '[image]', '[audio]', '[document]', '[file]'].includes(text);
+}
+
+function buildGalleryItems(messages) {
+  return (messages || [])
+    .map((message) => {
+      const resolvedMediaId = getResolvedMediaId(message);
+      const mediaType = getMediaType(message);
+      const src = getMediaSrc(message, resolvedMediaId);
+      if (mediaType !== 'image' || !src) return null;
+      return {
+        messageId: String(message.id),
+        src,
+        createdAt: message.created_at,
+      };
+    })
+    .filter(Boolean);
+}
+
+function buildThreadItems(messages) {
+  const out = [];
+  for (const message of messages || []) {
+    const mediaType = getMediaType(message);
+    const body = getDisplayBody(message.body);
+    const resolvedMediaId = getResolvedMediaId(message);
+    const canGroupImage = mediaType === 'image' && !!resolvedMediaId && !body;
+    const ts = new Date(message.created_at || 0).getTime();
+
+    if (!canGroupImage) {
+      out.push({ type: 'message', message });
+      continue;
+    }
+
+    const last = out[out.length - 1];
+    if (
+      last &&
+      last.type === 'imageGroup' &&
+      last.direction === message.direction &&
+      ts - last.lastTimestamp <= IMAGE_GROUP_WINDOW_MS
+    ) {
+      last.messages.push(message);
+      last.lastTimestamp = ts;
+      continue;
+    }
+
+    out.push({
+      type: 'imageGroup',
+      direction: message.direction,
+      messages: [message],
+      lastTimestamp: ts,
+    });
+  }
+  return out;
 }
 
 function upsertIncomingMessage(previous, incoming) {
@@ -836,6 +1048,47 @@ const messageImage = {
   display: 'block',
   cursor: 'pointer',
 };
+const imageTileButton = {
+  border: 'none',
+  padding: 0,
+  margin: 0,
+  background: 'transparent',
+  cursor: 'pointer',
+};
+const imageGroupBubbleOut = {
+  ...bubbleOut,
+  maxWidth: '82%',
+  padding: 6,
+};
+const imageGroupBubbleIn = {
+  ...bubbleIn,
+  maxWidth: '82%',
+  padding: 6,
+};
+const imageGrid = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+  gap: 6,
+};
+const imageGridSingle = {
+  display: 'grid',
+  gridTemplateColumns: 'minmax(0, 1fr)',
+  gap: 0,
+};
+const groupImageThumb = {
+  width: '100%',
+  aspectRatio: '1 / 1',
+  objectFit: 'cover',
+  borderRadius: 8,
+  display: 'block',
+};
+const groupImageLarge = {
+  width: '100%',
+  maxHeight: 340,
+  objectFit: 'cover',
+  borderRadius: 8,
+  display: 'block',
+};
 const messageVideo = {
   width: 'min(320px, 100%)',
   maxHeight: 320,
@@ -857,6 +1110,93 @@ const missingMediaHint = {
   marginTop: 6,
   fontSize: 11,
   opacity: 0.72,
+};
+const lightboxOverlay = {
+  position: 'fixed',
+  inset: 0,
+  zIndex: 210,
+  background: 'rgba(4, 10, 7, 0.78)',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: 12,
+};
+const lightboxPanel = {
+  width: 'min(1120px, 100%)',
+  height: 'min(92vh, 100%)',
+  borderRadius: 14,
+  background: 'rgba(10, 14, 12, 0.94)',
+  display: 'flex',
+  flexDirection: 'column',
+  position: 'relative',
+  overflow: 'hidden',
+};
+const lightboxCloseBtn = {
+  position: 'absolute',
+  top: 12,
+  right: 12,
+  zIndex: 2,
+  border: '1px solid rgba(255,255,255,0.35)',
+  background: 'rgba(0,0,0,0.35)',
+  color: '#fff',
+  borderRadius: 10,
+  padding: '6px 10px',
+  cursor: 'pointer',
+  fontSize: 16,
+};
+const lightboxNavBtn = {
+  position: 'absolute',
+  top: '50%',
+  transform: 'translateY(-50%)',
+  zIndex: 2,
+  border: '1px solid rgba(255,255,255,0.35)',
+  background: 'rgba(0,0,0,0.35)',
+  color: '#fff',
+  borderRadius: 999,
+  width: 38,
+  height: 38,
+  cursor: 'pointer',
+  fontSize: 17,
+  lineHeight: '36px',
+};
+const lightboxImageWrap = {
+  flex: 1,
+  minHeight: 0,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  padding: '24px 56px 12px',
+};
+const lightboxImage = {
+  maxWidth: '100%',
+  maxHeight: '100%',
+  objectFit: 'contain',
+  borderRadius: 10,
+};
+const lightboxThumbStrip = {
+  display: 'flex',
+  gap: 8,
+  overflowX: 'auto',
+  padding: '10px 12px 12px',
+  background: 'rgba(0,0,0,0.22)',
+};
+const lightboxThumbBtn = {
+  border: '2px solid transparent',
+  borderRadius: 8,
+  padding: 0,
+  background: 'transparent',
+  cursor: 'pointer',
+  flex: '0 0 auto',
+};
+const lightboxThumbBtnActive = {
+  borderColor: 'var(--smct-primary)',
+};
+const lightboxThumbImg = {
+  width: 58,
+  height: 58,
+  objectFit: 'cover',
+  borderRadius: 6,
+  display: 'block',
 };
 const composer = {
   padding: 12, borderTop: '1px solid var(--smct-border)', flexShrink: 0, background: 'var(--smct-surface)',
