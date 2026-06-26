@@ -24,7 +24,10 @@ export default function Conversation({
   const [channel, setChannel] = useState('whatsapp');
   const [pendingImages, setPendingImages] = useState([]);
   const bottomRef = useRef(null);
+  const threadRef = useRef(null);
   const imageInputRef = useRef(null);
+  const shouldStickToBottomRef = useRef(true);
+  const lastMessageCountRef = useRef(0);
 
   const whatsappEnabled = lead?.whatsapp_valid !== false;
   const emailEnabled = lead?.email_valid !== false;
@@ -104,9 +107,15 @@ export default function Conversation({
     };
   }, [lead?.id]);
 
-  // Auto-scroll to newest message
+  // Auto-scroll only when user is already near bottom (or first load).
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const count = messages.length;
+    const hasNewMessage = count > lastMessageCountRef.current;
+    lastMessageCountRef.current = count;
+
+    if (!hasNewMessage && count > 0) return;
+    if (!shouldStickToBottomRef.current && count > 0) return;
+    bottomRef.current?.scrollIntoView({ behavior: count <= 1 ? 'auto' : 'smooth' });
   }, [messages]);
 
   useEffect(() => {
@@ -306,6 +315,12 @@ export default function Conversation({
     });
   }
 
+  function handleThreadScroll(e) {
+    const el = e.currentTarget;
+    const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
+    shouldStickToBottomRef.current = remaining <= 48;
+  }
+
   const panelUi = (
     <div style={embedded ? panelEmbedded : panel} onClick={(e) => e.stopPropagation()}>
         <div style={header}>
@@ -353,7 +368,12 @@ export default function Conversation({
           </div>
         )}
 
-        <div style={thread} className="smct-mobile-scroll-hide">
+        <div
+          ref={threadRef}
+          style={thread}
+          className="smct-mobile-scroll-hide"
+          onScroll={handleThreadScroll}
+        >
           {loading && <p style={{ color: 'var(--smct-muted)', textAlign: 'center' }}>Loading…</p>}
           {!loading && messages.length === 0 && (
             <div style={{ color: 'var(--smct-muted)', textAlign: 'center', marginTop: 40 }}>

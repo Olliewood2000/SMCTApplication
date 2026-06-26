@@ -137,9 +137,7 @@ export default function MessagesSection({ focusLeadId, refreshSignal = 0 }) {
               onClick={() => setSelectedLead(lead)}
             >
               <div style={{ display: 'flex', gap: 10, alignItems: 'center', minWidth: 0 }}>
-                <div style={avatarCircle}>
-                  {getInitials(leadFullName)}
-                </div>
+                <BrandAvatar lead={lead} leadFullName={leadFullName} />
                 <div style={{ minWidth: 0 }}>
                 <div style={nameLine}>{leadFullName || 'Unknown seller'}</div>
                 <div style={vehicleLine}>{lead.year} {lead.make} {lead.model}</div>
@@ -226,6 +224,30 @@ function getInitials(name) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (!parts.length) return 'S';
   return parts.slice(0, 2).map((p) => p[0].toUpperCase()).join('');
+}
+
+function BrandAvatar({ lead, leadFullName }) {
+  const [failed, setFailed] = useState(false);
+  const make = lead?.make || '';
+
+  useEffect(() => {
+    setFailed(false);
+  }, [make]);
+
+  if (!make || failed) {
+    return <div style={avatarCircle}>{getInitials(leadFullName)}</div>;
+  }
+
+  return (
+    <div style={avatarCircle}>
+      <img
+        src={`/api/brand-logo?make=${encodeURIComponent(make)}`}
+        alt={`${make} logo`}
+        style={brandAvatarImg}
+        onError={() => setFailed(true)}
+      />
+    </div>
+  );
 }
 
 const desktopWrap = {
@@ -340,6 +362,13 @@ const avatarCircle = {
   fontSize: 12,
   fontWeight: 700,
   flexShrink: 0,
+  overflow: 'hidden',
+};
+const brandAvatarImg = {
+  width: '100%',
+  height: '100%',
+  objectFit: 'cover',
+  display: 'block',
 };
 const mobileWrap = {
   position: 'relative',

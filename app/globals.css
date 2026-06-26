@@ -332,6 +332,17 @@ a {
   overflow: hidden;
 }
 
+.smct-mobile-scroll-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.smct-mobile-scroll-hide::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 @media (max-width: 980px) {
   .smct-app-shell {
     grid-template-columns: 1fr;
@@ -404,14 +415,5 @@ a {
     color: var(--smct-primary);
     background: var(--smct-primary-soft);
     border-color: var(--smct-primary);
-  }
-  .smct-mobile-scroll-hide {
-    scrollbar-width: none;
-    -ms-overflow-style: none;
-  }
-  .smct-mobile-scroll-hide::-webkit-scrollbar {
-    display: none;
-    width: 0;
-    height: 0;
   }
 }
