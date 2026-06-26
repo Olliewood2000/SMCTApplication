@@ -1061,18 +1061,18 @@ const imageTileButton = {
 };
 const imageGroupBubbleOut = {
   ...bubbleOut,
-  maxWidth: '82%',
+  maxWidth: 240,
   padding: 6,
 };
 const imageGroupBubbleIn = {
   ...bubbleIn,
-  maxWidth: '82%',
+  maxWidth: 240,
   padding: 6,
 };
 const imageGrid = {
   display: 'grid',
   gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
-  gap: 6,
+  gap: 4,
 };
 const imageGridSingle = {
   display: 'grid',
@@ -1083,14 +1083,14 @@ const groupImageThumb = {
   width: '100%',
   aspectRatio: '1 / 1',
   objectFit: 'cover',
-  borderRadius: 8,
+  borderRadius: 7,
   display: 'block',
 };
 const groupImageLarge = {
   width: '100%',
-  maxHeight: 340,
+  maxHeight: 180,
   objectFit: 'cover',
-  borderRadius: 8,
+  borderRadius: 7,
   display: 'block',
 };
 const messageVideo = {
@@ -1140,13 +1140,15 @@ const lightboxCloseBtn = {
   top: 12,
   right: 12,
   zIndex: 2,
-  border: '1px solid rgba(255,255,255,0.35)',
-  background: 'rgba(0,0,0,0.35)',
+  border: 'none',
+  background: 'transparent',
   color: '#fff',
-  borderRadius: 10,
-  padding: '6px 10px',
+  borderRadius: 0,
+  padding: 4,
   cursor: 'pointer',
-  fontSize: 16,
+  fontSize: 26,
+  lineHeight: 1,
+  fontWeight: 400,
 };
 const lightboxNavBtn = {
   position: 'absolute',
@@ -1157,11 +1159,14 @@ const lightboxNavBtn = {
   background: 'rgba(0,0,0,0.35)',
   color: '#fff',
   borderRadius: 999,
-  width: 38,
-  height: 38,
+  width: 42,
+  height: 42,
   cursor: 'pointer',
-  fontSize: 17,
-  lineHeight: '36px',
+  fontSize: 20,
+  lineHeight: 1,
+  display: 'grid',
+  placeItems: 'center',
+  padding: 0,
 };
 const lightboxImageWrap = {
   flex: 1,
